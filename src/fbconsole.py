@@ -17,7 +17,7 @@
 import BaseHTTPServer
 import cookielib
 import httplib
-import anyjson as json
+import json
 import random
 import mimetypes
 import os
@@ -75,6 +75,7 @@ else:
     from urllib import urlencode
 
 APP_ID = '179745182062082'
+APP_SECRET = 'secret, duh'
 SERVER_PORT = 8080
 ACCESS_TOKEN = None
 CLIENT = None
@@ -102,6 +103,7 @@ __all__ = [
     'iter_pages',
     'Client',
     'APP_ID',
+    'APP_SECRET',
     'SERVER_PORT',
     'ACCESS_TOKEN',
     'AUTH_SCOPE',
@@ -180,7 +182,6 @@ class _MultipartPostHandler(BaseHandler):
 
 
 class _RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
-
     def do_GET(self):
         global ACCESS_TOKEN
         self.send_response(200)
@@ -190,9 +191,12 @@ class _RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         params = parse_qs(urlparse(self.path).query)
         ACCESS_TOKEN = params.get('access_token', [None])[0]
         if ACCESS_TOKEN:
-            data = {'scope': AUTH_SCOPE,
-                    'access_token': ACCESS_TOKEN}
-            expiration = params.get('expires_in', [None])[0]
+            long_token, expiration = extend_token(ACCESS_TOKEN)
+
+            data = {
+                'scope': AUTH_SCOPE,
+                'access_token': long_token
+            }
             if expiration:
                 if expiration == '0':
                     # this is what's returned when offline_access is requested
@@ -279,7 +283,7 @@ delete(path, params) - send a delete request
 fql(query) - make an fql request
 '''
 
-def authenticate():
+def authenticate(browser_avaliable):
     """Authenticate with facebook so you can make api calls that require auth.
 
     Alternatively you can just set the ACCESS_TOKEN global variable in this
@@ -299,14 +303,17 @@ def authenticate():
             needs_auth = False
 
     if needs_auth:
-        webbrowser.open(oauth_url(
+        if browser_avaliable:
+            webbrowser.open(oauth_url(
                 APP_ID,
-                'http://127.0.0.1:%s/' % SERVER_PORT, AUTH_SCOPE
-                ))
+                'http://localhost:%s/' % SERVER_PORT, AUTH_SCOPE
+            ))
 
-        httpd = BaseHTTPServer.HTTPServer(('127.0.0.1', SERVER_PORT), _RequestHandler)
-        while ACCESS_TOKEN is None:
-            httpd.handle_request()
+            httpd = BaseHTTPServer.HTTPServer(('127.0.0.1', SERVER_PORT), _RequestHandler)
+            while ACCESS_TOKEN is None:
+                httpd.handle_request()
+        else:
+            raise "Can't authentificate (browser not avaliable)"
 
 def logout():
     """Logout of facebook.  This just removes the cached access token."""
@@ -663,6 +670,20 @@ def graph_url(path, params=None):
 
     """
     return _get_client().graph_url(path, params=params)
+
+
+def extend_token(token):
+    global APP_ID, APP_SECRET
+    params = urlencode({
+        "client_id": APP_ID,
+        "client_secret": APP_SECRET,
+        "grant_type": "fb_exchange_token",
+        "fb_exchange_token": token
+    })
+    url = "https://graph.facebook.com/oauth/access_token?" + params
+    qs = parse_qs(urllib.urlopen(url).read())
+    return qs["access_token"][0], qs["expires"][0]
+
 
 def oauth_url(app_id, redirect_uri, auth_scope):
     """Generates a url to an oath authentication dialog.
